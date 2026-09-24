@@ -1,5 +1,5 @@
 streamlit==1.50.0
-numpy
+numpy<2
+pandas
 Pillow
-opencv-python
 face-recognition==1.3.0
