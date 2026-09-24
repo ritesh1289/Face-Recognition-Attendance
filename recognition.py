@@ -1,109 +1,280 @@
-"""Webcam capture and face recognition helpers."""
+"""
+Face recognition functions for Streamlit.
+
+The browser camera is handled by Streamlit's
+st.camera_input().
+
+This module only receives the captured image
+and performs face recognition.
+"""
 
 from __future__ import annotations
 
 import pickle
-from pathlib import Path
-
-try:
-    import cv2
-except ImportError:  # pragma: no cover - handled by the GUI at runtime
-    cv2 = None
+from io import BytesIO
 
 try:
     import face_recognition
-except ImportError:  # pragma: no cover - handled by the GUI at runtime
+
+except ImportError:
+
     face_recognition = None
 
 
 class RecognitionError(RuntimeError):
-    """Raised when camera or recognition support is not available."""
+    """Raised when face recognition is unavailable."""
 
+
+# ---------------------------------------------------------
+# DEPENDENCY CHECK
+# ---------------------------------------------------------
 
 def dependency_status() -> str:
-    missing = []
-    if cv2 is None:
-        missing.append("opencv-python")
+
     if face_recognition is None:
-        missing.append("face-recognition")
-    return "" if not missing else "Missing package(s): " + ", ".join(missing)
+
+        return (
+            "The face-recognition package is not installed. "
+            "Please check requirements.txt."
+        )
+
+    return ""
 
 
-def capture_encoding(window_title: str = "Face capture") -> bytes:
-    if cv2 is None or face_recognition is None:
-        raise RecognitionError(dependency_status())
+# ---------------------------------------------------------
+# CAPTURE / ENCODE FACE FROM STREAMLIT IMAGE
+# ---------------------------------------------------------
 
-    camera = cv2.VideoCapture(0)
-    if not camera.isOpened():
-        raise RecognitionError("Could not open the webcam.")
+def capture_encoding_from_image(
+    image_bytes: bytes,
+) -> bytes:
 
-    encoding = None
+    if face_recognition is None:
+
+        raise RecognitionError(
+            dependency_status()
+        )
+
     try:
-        while True:
-            success, frame = camera.read()
-            if not success:
-                raise RecognitionError("Could not read a frame from the webcam.")
-            display = frame.copy()
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            locations = face_recognition.face_locations(rgb_frame)
-            for top, right, bottom, left in locations:
-                cv2.rectangle(display, (left, top), (right, bottom), (0, 190, 120), 2)
-            cv2.putText(
-                display,
-                "Look at camera | SPACE: capture | ESC: cancel",
-                (20, 35),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2,
+
+        image = face_recognition.load_image_file(
+            BytesIO(image_bytes)
+        )
+
+    except Exception as error:
+
+        raise RecognitionError(
+            f"Could not read the captured image: {error}"
+        )
+
+    try:
+
+        locations = face_recognition.face_locations(
+            image
+        )
+
+    except Exception as error:
+
+        raise RecognitionError(
+            f"Could not detect face: {error}"
+        )
+
+    if len(locations) == 0:
+
+        raise RecognitionError(
+            "No face was detected. "
+            "Please capture a clear image with the face visible."
+        )
+
+    if len(locations) > 1:
+
+        raise RecognitionError(
+            "Multiple faces detected. "
+            "Please capture an image containing only one student."
+        )
+
+    try:
+
+        encodings = face_recognition.face_encodings(
+            image,
+            locations,
+        )
+
+    except Exception as error:
+
+        raise RecognitionError(
+            f"Could not create face encoding: {error}"
+        )
+
+    if not encodings:
+
+        raise RecognitionError(
+            "Face encoding could not be generated."
+        )
+
+    return pickle.dumps(
+        encodings[0]
+    )
+
+
+# ---------------------------------------------------------
+# RECOGNIZE FACE
+# ---------------------------------------------------------
+
+def recognize_from_image(
+    image_bytes: bytes,
+    students: list,
+) -> int | None:
+
+    if face_recognition is None:
+
+        raise RecognitionError(
+            dependency_status()
+        )
+
+    if not students:
+
+        raise RecognitionError(
+            "No registered students are available."
+        )
+
+    # ---------------------------------------------
+    # LOAD IMAGE
+    # ---------------------------------------------
+
+    try:
+
+        image = face_recognition.load_image_file(
+            BytesIO(image_bytes)
+        )
+
+    except Exception as error:
+
+        raise RecognitionError(
+            f"Could not read image: {error}"
+        )
+
+    # ---------------------------------------------
+    # DETECT FACE
+    # ---------------------------------------------
+
+    try:
+
+        locations = face_recognition.face_locations(
+            image
+        )
+
+    except Exception as error:
+
+        raise RecognitionError(
+            f"Face detection failed: {error}"
+        )
+
+    if not locations:
+
+        raise RecognitionError(
+            "No face was detected."
+        )
+
+    # ---------------------------------------------
+    # CREATE ENCODINGS
+    # ---------------------------------------------
+
+    try:
+
+        encodings = face_recognition.face_encodings(
+            image,
+            locations,
+        )
+
+    except Exception as error:
+
+        raise RecognitionError(
+            f"Could not create face encoding: {error}"
+        )
+
+    if not encodings:
+
+        raise RecognitionError(
+            "Could not encode the detected face."
+        )
+
+    # ---------------------------------------------
+    # LOAD REGISTERED FACES
+    # ---------------------------------------------
+
+    known_encodings = []
+
+    known_ids = []
+
+    for student in students:
+
+        stored_encoding = student["face_encoding"]
+
+        if not stored_encoding:
+
+            continue
+
+        try:
+
+            encoding = pickle.loads(
+                stored_encoding
             )
-            cv2.imshow(window_title, display)
-            key = cv2.waitKey(1) & 0xFF
-            if key == 27:
-                break
-            if key == 32 and len(locations) == 1:
-                candidate = face_recognition.face_encodings(rgb_frame, locations)[0]
-                encoding = pickle.dumps(candidate)
-                break
-    finally:
-        camera.release()
-        cv2.destroyAllWindows()
 
-    if encoding is None:
-        raise RecognitionError("No single face was captured. Please try again.")
-    return encoding
+            known_encodings.append(
+                encoding
+            )
 
+            known_ids.append(
+                student["id"]
+            )
 
-def recognize_from_webcam(students: list[dict], window_title: str = "Mark attendance") -> int | None:
-    if cv2 is None or face_recognition is None:
-        raise RecognitionError(dependency_status())
+        except Exception:
+            # Ignore corrupted face data
+            continue
 
-    known = [(student["id"], pickle.loads(student["face_encoding"])) for student in students if student.get("face_encoding")]
-    if not known:
-        raise RecognitionError("No student face data is available yet.")
+    if not known_encodings:
 
-    camera = cv2.VideoCapture(0)
-    if not camera.isOpened():
-        raise RecognitionError("Could not open the webcam.")
-    matched_id = None
-    try:
-        while True:
-            success, frame = camera.read()
-            if not success:
-                break
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            locations = face_recognition.face_locations(rgb_frame)
-            encodings = face_recognition.face_encodings(rgb_frame, locations)
-            for location, candidate in zip(locations, encodings):
-                matches = face_recognition.compare_faces([item[1] for item in known], candidate, tolerance=0.48)
-                if True in matches:
-                    matched_id = known[matches.index(True)][0]
-                    break
-            cv2.putText(frame, "ESC: cancel", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.imshow(window_title, frame)
-            if matched_id is not None or (cv2.waitKey(1) & 0xFF) == 27:
-                break
-    finally:
-        camera.release()
-        cv2.destroyAllWindows()
-    return matched_id
+        raise RecognitionError(
+            "No valid registered face data is available."
+        )
+
+    # ---------------------------------------------
+    # COMPARE
+    # ---------------------------------------------
+
+    tolerance = 0.48
+
+    for candidate in encodings:
+
+        try:
+
+            distances = face_recognition.face_distance(
+                known_encodings,
+                candidate,
+            )
+
+            if len(distances) == 0:
+                continue
+
+            best_index = int(
+                distances.argmin()
+            )
+
+            best_distance = float(
+                distances[best_index]
+            )
+
+            if best_distance <= tolerance:
+
+                return known_ids[
+                    best_index
+                ]
+
+        except Exception as error:
+
+            raise RecognitionError(
+                f"Face comparison failed: {error}"
+            )
+
+    return None
