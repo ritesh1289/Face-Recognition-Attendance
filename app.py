@@ -1,31 +1,12 @@
 """
 Face Recognition Attendance System
 Streamlit Web Application
-
-Technology:
-- Python
-- Streamlit
-- OpenCV
-- LBPH Face Recognition
-- SQLite
-- Pandas
-
-Features:
-- Student registration
-- Browser camera capture
-- Face detection
-- Face recognition
-- Attendance once per day
-- Attendance reports
-- Search and date filtering
-- CSV export
 """
 
 from __future__ import annotations
 
-import io
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -35,19 +16,18 @@ import streamlit as st
 
 
 # =========================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
     page_title="Face Recognition Attendance",
     page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 
 # =========================================================
-# CUSTOM CSS
+# CSS
 # =========================================================
 
 st.markdown(
@@ -55,45 +35,29 @@ st.markdown(
     <style>
 
     .main-title {
-        font-size: 38px;
+        font-size: 36px;
         font-weight: 700;
         color: #12304a;
-        margin-bottom: 5px;
     }
 
     .subtitle {
-        font-size: 16px;
         color: #5a6872;
         margin-bottom: 25px;
     }
 
     .section-title {
         font-size: 26px;
-        font-weight: 600;
+        font-weight: 700;
         color: #12304a;
-        margin-bottom: 18px;
+        margin-bottom: 20px;
     }
 
-    .info-card {
-        padding: 20px;
-        border-radius: 12px;
-        background: #f5f7f9;
-        border: 1px solid #e1e5e8;
-        margin-bottom: 15px;
-    }
-
-    .success-card {
-        padding: 18px;
-        border-radius: 12px;
-        background: #eaf8f2;
-        border: 1px solid #b7e4d1;
-    }
-
-    .warning-card {
-        padding: 18px;
-        border-radius: 12px;
-        background: #fff8e1;
-        border: 1px solid #ffe082;
+    .student-card {
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #dddddd;
+        background: #f8f9fa;
+        margin-bottom: 10px;
     }
 
     </style>
@@ -110,7 +74,8 @@ DATABASE_FILE = Path("attendance.db")
 
 
 @st.cache_resource
-def get_connection():
+def get_database():
+
     connection = sqlite3.connect(
         DATABASE_FILE,
         check_same_thread=False,
@@ -121,13 +86,6 @@ def get_connection():
     connection.execute(
         "PRAGMA foreign_keys = ON"
     )
-
-    initialize_database(connection)
-
-    return connection
-
-
-def initialize_database(connection):
 
     connection.executescript(
         """
@@ -167,12 +125,14 @@ def initialize_database(connection):
 
     connection.commit()
 
+    return connection
 
-db = get_connection()
+
+db = get_database()
 
 
 # =========================================================
-# FACE DETECTOR
+# OPENCV FACE DETECTOR
 # =========================================================
 
 CASCADE_PATH = (
@@ -183,101 +143,6 @@ CASCADE_PATH = (
 face_detector = cv2.CascadeClassifier(
     CASCADE_PATH
 )
-
-
-# =========================================================
-# CHECK OPENCV
-# =========================================================
-
-if face_detector.empty():
-
-    st.error(
-        "OpenCV face detection model could not be loaded."
-    )
-
-    st.stop()
-
-
-# =========================================================
-# FACE DETECTION
-# =========================================================
-
-def detect_face(image_bytes: bytes):
-
-    """
-    Detect exactly one face from uploaded/camera image.
-
-    Returns:
-        grayscale cropped face
-        OR None
-    """
-
-    image_array = np.frombuffer(
-        image_bytes,
-        dtype=np.uint8,
-    )
-
-    image = cv2.imdecode(
-        image_array,
-        cv2.IMREAD_COLOR,
-    )
-
-    if image is None:
-        return None
-
-    gray = cv2.cvtColor(
-        image,
-        cv2.COLOR_BGR2GRAY,
-    )
-
-    # Improve contrast
-    gray = cv2.equalizeHist(gray)
-
-    faces = face_detector.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(80, 80),
-    )
-
-    if len(faces) != 1:
-        return None
-
-    x, y, w, h = faces[0]
-
-    face = gray[
-        y:y + h,
-        x:x + w
-    ]
-
-    if face.size == 0:
-        return None
-
-    face = cv2.resize(
-        face,
-        (200, 200),
-    )
-
-    return face
-
-
-# =========================================================
-# SAVE FACE IMAGE
-# =========================================================
-
-def face_to_bytes(face):
-
-    success, encoded = cv2.imencode(
-        ".png",
-        face,
-    )
-
-    if not success:
-        raise ValueError(
-            "Could not save face image."
-        )
-
-    return encoded.tobytes()
 
 
 # =========================================================
@@ -313,10 +178,6 @@ def get_student_by_id(student_id):
     ).fetchone()
 
 
-# =========================================================
-# GET STUDENT BY STUDENT ID
-# =========================================================
-
 def get_student_by_student_id(student_id):
 
     return db.execute(
@@ -330,18 +191,92 @@ def get_student_by_student_id(student_id):
 
 
 # =========================================================
-# TRAIN LBPH MODEL
+# FACE DETECTION
+# =========================================================
+
+def detect_face(image_bytes):
+
+    image_array = np.frombuffer(
+        image_bytes,
+        dtype=np.uint8,
+    )
+
+    image = cv2.imdecode(
+        image_array,
+        cv2.IMREAD_COLOR,
+    )
+
+    if image is None:
+        return None
+
+    gray = cv2.cvtColor(
+        image,
+        cv2.COLOR_BGR2GRAY,
+    )
+
+    gray = cv2.equalizeHist(
+        gray
+    )
+
+    faces = face_detector.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(80, 80),
+    )
+
+    if len(faces) != 1:
+        return None
+
+    x, y, w, h = faces[0]
+
+    face = gray[
+        y:y + h,
+        x:x + w
+    ]
+
+    if face.size == 0:
+        return None
+
+    face = cv2.resize(
+        face,
+        (200, 200),
+    )
+
+    return face
+
+
+# =========================================================
+# FACE TO BYTES
+# =========================================================
+
+def face_to_bytes(face):
+
+    success, encoded = cv2.imencode(
+        ".png",
+        face,
+    )
+
+    if not success:
+
+        raise ValueError(
+            "Could not save face."
+        )
+
+    return encoded.tobytes()
+
+
+# =========================================================
+# TRAIN LBPH
 # =========================================================
 
 def create_lbph_model():
 
-    # Check OpenCV contrib
     if not hasattr(cv2, "face"):
 
         raise RuntimeError(
             "OpenCV Face module is unavailable. "
-            "Make sure opencv-contrib-python-headless "
-            "is installed."
+            "Check opencv-contrib-python-headless."
         )
 
     rows = db.execute(
@@ -354,13 +289,11 @@ def create_lbph_model():
 
     if not rows:
 
-        return None, []
+        return None
 
     images = []
 
     labels = []
-
-    valid_student_ids = []
 
     for row in rows:
 
@@ -390,16 +323,12 @@ def create_lbph_model():
                 int(row["id"])
             )
 
-            valid_student_ids.append(
-                int(row["id"])
-            )
-
         except Exception:
             continue
 
     if not images:
 
-        return None, []
+        return None
 
     model = cv2.face.LBPHFaceRecognizer_create(
         radius=1,
@@ -416,16 +345,14 @@ def create_lbph_model():
         ),
     )
 
-    return model, valid_student_ids
+    return model
 
 
 # =========================================================
-# RECOGNIZE STUDENT
+# RECOGNIZE
 # =========================================================
 
-def recognize_student(
-    image_bytes: bytes,
-):
+def recognize_student(image_bytes):
 
     face = detect_face(
         image_bytes
@@ -434,11 +361,10 @@ def recognize_student(
     if face is None:
 
         return None, (
-            "Please capture an image containing "
-            "exactly one clear face."
+            "Please capture exactly one clear face."
         )
 
-    model, known_ids = create_lbph_model()
+    model = create_lbph_model()
 
     if model is None:
 
@@ -454,28 +380,16 @@ def recognize_student(
 
     except Exception as error:
 
-        return None, (
-            f"Face recognition failed: {error}"
-        )
+        return None, str(error)
 
-    # Lower LBPH confidence is better.
-    #
-    # This threshold can be adjusted.
-    # 65 is used as a reasonably strict starting point.
+    # Lower is better for LBPH.
     threshold = 65.0
 
     if confidence > threshold:
 
         return None, (
-            "Face was detected, but the student "
-            "could not be confidently recognized."
-        )
-
-    if label not in known_ids:
-
-        return None, (
-            "Recognized face does not match "
-            "a registered student."
+            "Face detected, but student "
+            "could not be recognized."
         )
 
     student = get_student_by_id(
@@ -485,7 +399,7 @@ def recognize_student(
     if student is None:
 
         return None, (
-            "Student record was not found."
+            "Student record not found."
         )
 
     return student, confidence
@@ -524,13 +438,12 @@ def mark_attendance(student_id):
 
 
 # =========================================================
-# GET ATTENDANCE
+# ATTENDANCE
 # =========================================================
 
 def get_attendance(
     search="",
     selected_date="",
-    limit=None,
 ):
 
     query = """
@@ -582,14 +495,6 @@ def get_attendance(
         ORDER BY a.attended_at DESC
     """
 
-    if limit is not None:
-
-        query += " LIMIT ?"
-
-        values.append(
-            limit
-        )
-
     return list(
         db.execute(
             query,
@@ -611,8 +516,7 @@ st.markdown(
 
 st.markdown(
     '<div class="subtitle">'
-    "Register students, capture face data, "
-    "recognize students, and maintain attendance records."
+    "Student registration, face recognition and attendance management"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -624,7 +528,7 @@ st.markdown(
 
 students = get_students()
 
-attendance_records = get_attendance()
+attendance = get_attendance()
 
 students_with_faces = [
     student
@@ -633,14 +537,15 @@ students_with_faces = [
 ]
 
 
-st.sidebar.title("📌 Navigation")
+st.sidebar.title("📌 Menu")
 
 page = st.sidebar.radio(
-    "Select Page",
+    "Select",
     [
         "🏠 Dashboard",
         "👨‍🎓 Student Registration",
         "📷 Mark Attendance",
+        "📋 Registered Students",
         "📊 Attendance Report",
     ],
 )
@@ -648,7 +553,7 @@ page = st.sidebar.radio(
 st.sidebar.markdown("---")
 
 st.sidebar.metric(
-    "Registered Students",
+    "Students",
     len(students),
 )
 
@@ -658,8 +563,8 @@ st.sidebar.metric(
 )
 
 st.sidebar.metric(
-    "Attendance Records",
-    len(attendance_records),
+    "Attendance",
+    len(attendance),
 )
 
 
@@ -676,67 +581,24 @@ if page == "🏠 Dashboard":
         unsafe_allow_html=True,
     )
 
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with col1:
-
+    with c1:
         st.metric(
             "👨‍🎓 Students",
             len(students),
         )
 
-    with col2:
-
+    with c2:
         st.metric(
             "🙂 Face Profiles",
             len(students_with_faces),
         )
 
-    with col3:
-
+    with c3:
         st.metric(
             "📝 Attendance",
-            len(attendance_records),
-        )
-
-    st.markdown("---")
-
-    left, right = st.columns(2)
-
-    with left:
-
-        st.subheader(
-            "👨‍🎓 Student Registration"
-        )
-
-        st.write(
-            """
-            Register students with:
-
-            • Student ID  
-            • Full name  
-            • Course / class  
-            • Email  
-            • Face photograph
-            """
-        )
-
-    with right:
-
-        st.subheader(
-            "📷 Face Attendance"
-        )
-
-        st.write(
-            """
-            Attendance is recorded by:
-
-            • Opening the browser camera  
-            • Capturing a face  
-            • Detecting the face  
-            • Comparing it with registered faces  
-            • Recording attendance once per day
-            """
+            len(attendance),
         )
 
     st.markdown("---")
@@ -745,9 +607,7 @@ if page == "🏠 Dashboard":
         "📋 Recent Attendance"
     )
 
-    recent = get_attendance(
-        limit=10
-    )
+    recent = get_attendance()[:10]
 
     if recent:
 
@@ -793,45 +653,69 @@ elif page == "👨‍🎓 Student Registration":
     )
 
     st.info(
-        "Enter the student details and capture "
-        "one clear face image."
+        "Fill in ALL student details and then capture the student's face."
     )
 
-    col1, col2 = st.columns(2)
+    # -----------------------------------------------------
+    # STUDENT ID - CLEARLY VISIBLE
+    # -----------------------------------------------------
 
-    with col1:
+    st.subheader(
+        "1️⃣ Student Information"
+    )
 
-        student_id = st.text_input(
-            "Student ID *",
-            placeholder="Example: STU001",
-        )
+    student_id = st.text_input(
+        "Student ID *",
+        placeholder="Enter Student ID — example: STU001",
+        key="student_id_input",
+    )
 
-        name = st.text_input(
-            "Full Name *",
-            placeholder="Example: Ritesh Patwa",
-        )
+    name = st.text_input(
+        "Full Name *",
+        placeholder="Enter student's full name",
+        key="name_input",
+    )
 
-        course = st.text_input(
-            "Course / Class *",
-            placeholder="Example: B.Sc IT",
-        )
+    course = st.text_input(
+        "Course / Class *",
+        placeholder="Example: B.Sc Information Technology",
+        key="course_input",
+    )
 
-        email = st.text_input(
-            "Email",
-            placeholder="student@example.com",
-        )
-
-    with col2:
-
-        st.subheader(
-            "📷 Face Capture"
-        )
-
-        captured_image = st.camera_input(
-            "Take a clear face photo"
-        )
+    email = st.text_input(
+        "Email",
+        placeholder="student@example.com",
+        key="email_input",
+    )
 
     st.markdown("---")
+
+    # -----------------------------------------------------
+    # CAMERA
+    # -----------------------------------------------------
+
+    st.subheader(
+        "2️⃣ Capture Student Face"
+    )
+
+    st.write(
+        "Make sure only ONE person's face is visible."
+    )
+
+    captured_image = st.camera_input(
+        "📷 Open Camera and Capture Student Face",
+        key="registration_camera",
+    )
+
+    st.markdown("---")
+
+    # -----------------------------------------------------
+    # REGISTER BUTTON
+    # -----------------------------------------------------
+
+    st.subheader(
+        "3️⃣ Save Student"
+    )
 
     if st.button(
         "💾 Register Student",
@@ -839,46 +723,43 @@ elif page == "👨‍🎓 Student Registration":
         use_container_width=True,
     ):
 
-        # -----------------------------------------
-        # VALIDATION
-        # -----------------------------------------
-
+        # Student ID
         if not student_id.strip():
 
-            st.warning(
-                "Student ID is required."
+            st.error(
+                "❌ Student ID is required."
             )
 
             st.stop()
 
+        # Name
         if not name.strip():
 
-            st.warning(
-                "Full name is required."
+            st.error(
+                "❌ Full Name is required."
             )
 
             st.stop()
 
+        # Course
         if not course.strip():
 
-            st.warning(
-                "Course / class is required."
+            st.error(
+                "❌ Course / Class is required."
             )
 
             st.stop()
 
+        # Camera
         if captured_image is None:
 
-            st.warning(
-                "Please capture the student's face."
+            st.error(
+                "❌ Please capture the student's face."
             )
 
             st.stop()
 
-        # -----------------------------------------
-        # DUPLICATE CHECK
-        # -----------------------------------------
-
+        # Duplicate
         existing = get_student_by_student_id(
             student_id.strip()
         )
@@ -886,56 +767,40 @@ elif page == "👨‍🎓 Student Registration":
         if existing:
 
             st.error(
-                f"Student ID '{student_id}' "
-                "is already registered."
+                f"❌ Student ID '{student_id}' "
+                "already exists."
             )
 
             st.stop()
 
-        # -----------------------------------------
-        # DETECT FACE
-        # -----------------------------------------
+        # Face
+        with st.spinner(
+            "Processing student face..."
+        ):
 
-        try:
-
-            with st.spinner(
-                "Detecting face..."
-            ):
-
-                face = detect_face(
-                    captured_image.getvalue()
-                )
-
-            if face is None:
-
-                st.error(
-                    "Exactly one face must be visible "
-                    "in the photograph."
-                )
-
-                st.info(
-                    "Please look directly at the camera "
-                    "and capture the image again."
-                )
-
-                st.stop()
-
-            face_bytes = face_to_bytes(
-                face
+            face = detect_face(
+                captured_image.getvalue()
             )
 
-        except Exception as error:
+        if face is None:
 
             st.error(
-                f"Face processing failed: {error}"
+                "❌ Exactly one face must be visible."
+            )
+
+            st.info(
+                "Please capture another image "
+                "with one clear face."
             )
 
             st.stop()
 
-        # -----------------------------------------
-        # SAVE
-        # -----------------------------------------
+        # Save face
+        face_bytes = face_to_bytes(
+            face
+        )
 
+        # Database
         try:
 
             db.execute(
@@ -966,28 +831,96 @@ elif page == "👨‍🎓 Student Registration":
             db.commit()
 
             st.success(
-                f"✅ {name} registered successfully!"
+                "✅ Student registered successfully!"
             )
 
-            st.info(
-                "Face data has been saved successfully."
+            st.write(
+                f"**Student ID:** {student_id}"
+            )
+
+            st.write(
+                f"**Name:** {name}"
+            )
+
+            st.write(
+                f"**Course:** {course}"
+            )
+
+            st.write(
+                f"**Email:** {email if email else 'Not provided'}"
             )
 
             st.balloons()
 
-            st.rerun()
-
         except sqlite3.IntegrityError:
 
             st.error(
-                "That Student ID is already registered."
+                "This Student ID already exists."
             )
 
         except Exception as error:
 
             st.error(
-                f"Could not save student: {error}"
+                f"Database error: {error}"
             )
+
+
+# =========================================================
+# REGISTERED STUDENTS
+# =========================================================
+
+elif page == "📋 Registered Students":
+
+    st.markdown(
+        '<div class="section-title">'
+        "📋 Registered Students"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    students = get_students()
+
+    if not students:
+
+        st.info(
+            "No students registered yet."
+        )
+
+        st.write(
+            "Go to **Student Registration** "
+            "to add the first student."
+        )
+
+    else:
+
+        st.success(
+            f"{len(students)} student(s) registered."
+        )
+
+        table_data = []
+
+        for student in students:
+
+            table_data.append(
+                {
+                    "Student ID": student["student_id"],
+                    "Name": student["name"],
+                    "Course": student["course"],
+                    "Email": student["email"],
+                    "Face Data": (
+                        "✅ Captured"
+                        if student["face_image"]
+                        else "❌ Not Captured"
+                    ),
+                    "Registered": student["created_at"],
+                }
+            )
+
+        st.dataframe(
+            pd.DataFrame(table_data),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 # =========================================================
@@ -1006,88 +939,81 @@ elif page == "📷 Mark Attendance":
     if not students_with_faces:
 
         st.warning(
-            "No students with face profiles are registered."
+            "⚠️ No student face profiles are available."
         )
 
         st.info(
-            "First go to Student Registration "
-            "and register at least one student."
+            "Register a student first."
         )
 
     else:
 
         st.success(
             f"{len(students_with_faces)} "
-            "student face profile(s) available."
-        )
-
-        st.write(
-            "Allow camera access and capture the "
-            "student's face."
+            "face profile(s) available."
         )
 
         attendance_image = st.camera_input(
-            "📷 Capture Face for Attendance"
+            "📷 Capture Face for Attendance",
+            key="attendance_camera",
         )
 
         if attendance_image is not None:
 
-            try:
+            with st.spinner(
+                "Recognizing student..."
+            ):
 
-                with st.spinner(
-                    "Recognizing student..."
-                ):
+                student, result = recognize_student(
+                    attendance_image.getvalue()
+                )
 
-                    student, confidence = recognize_student(
-                        attendance_image.getvalue()
-                    )
+            if student is None:
 
-                if student is None:
+                st.error(
+                    "❌ " + str(result)
+                )
 
-                    st.error(
-                        "❌ " + str(confidence)
+            else:
+
+                confidence = result
+
+                marked = mark_attendance(
+                    student["id"]
+                )
+
+                if marked:
+
+                    st.success(
+                        f"✅ Attendance marked for "
+                        f"**{student['name']}**"
                     )
 
                 else:
 
-                    marked = mark_attendance(
-                        student["id"]
+                    st.warning(
+                        f"⚠️ {student['name']} "
+                        "is already marked present today."
                     )
 
-                    if marked:
+                st.write(
+                    f"**Student ID:** "
+                    f"{student['student_id']}"
+                )
 
-                        st.success(
-                            f"✅ Attendance marked for "
-                            f"**{student['name']}**"
-                        )
+                st.write(
+                    f"**Name:** "
+                    f"{student['name']}"
+                )
 
-                        st.write(
-                            f"**Student ID:** "
-                            f"{student['student_id']}"
-                        )
+                st.write(
+                    f"**Course:** "
+                    f"{student['course']}"
+                )
 
-                        st.write(
-                            f"**Course:** "
-                            f"{student['course']}"
-                        )
-
-                        st.write(
-                            f"Recognition confidence: "
-                            f"{confidence:.2f}"
-                        )
-
-                    else:
-
-                        st.warning(
-                            f"⚠️ {student['name']} "
-                            "has already been marked "
-                            "present today."
-                        )
-
-            except Exception as error:
-
-                st.error(
-                    f"Recognition error: {error}"
+                st.write(
+                    f"Recognition distance: "
+                    f"{confidence:.2f}"
                 )
 
 
@@ -1104,18 +1030,16 @@ elif page == "📊 Attendance Report":
         unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
-    with col1:
+    with c1:
 
         search = st.text_input(
             "🔍 Search",
-            placeholder=(
-                "Name, Student ID or Course"
-            ),
+            placeholder="Name / Student ID / Course",
         )
 
-    with col2:
+    with c2:
 
         selected_date = st.date_input(
             "📅 Date",
@@ -1167,11 +1091,9 @@ elif page == "📊 Attendance Report":
         )
 
         st.download_button(
-            label="⬇️ Download CSV Report",
+            "⬇️ Download CSV",
             data=csv_data,
-            file_name=(
-                "attendance_report.csv"
-            ),
+            file_name="attendance_report.csv",
             mime="text/csv",
             use_container_width=True,
         )
