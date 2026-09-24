@@ -1,2 +1,5 @@
 streamlit==1.50.0
+numpy<2
 pandas
+Pillow
+opencv-contrib-python-headless
