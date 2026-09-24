@@ -1,9 +1,13 @@
-.venv/
 __pycache__/
-*.pyc
-*.pyo
-*.db
-attendance.db
-.env
-.env.*
+*.py[cod]
 
+.venv/
+venv/
+env/
+
+.env
+
+attendance.db
+*.db
+
+.streamlit/secrets.toml
