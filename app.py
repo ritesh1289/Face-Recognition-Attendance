@@ -1,189 +1,639 @@
-"""Face Recognition Attendance System desktop application."""
+"""
+Face Recognition Attendance System
+Streamlit Web Application
+
+Features:
+- Student registration
+- Browser camera face capture
+- Face recognition
+- Daily attendance
+- Attendance search and filtering
+- CSV report export
+- SQLite database
+"""
 
 from __future__ import annotations
 
-import csv
-import tkinter as tk
-from datetime import date
-from tkinter import filedialog, messagebox, ttk
+import pandas as pd
+import streamlit as st
 
 from database import Database
-from recognition import RecognitionError, capture_encoding, recognize_from_webcam
+from recognition import (
+    RecognitionError,
+    capture_encoding_from_image,
+    recognize_from_image,
+)
 
 
-class AttendanceApp(tk.Tk):
-    def __init__(self) -> None:
-        super().__init__()
-        self.title("Face Recognition Attendance")
-        self.geometry("1050x680")
-        self.minsize(900, 600)
-        self.db = Database()
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self._configure_style()
-        self._build_ui()
-        self.refresh_students()
-        self.refresh_attendance()
+# ---------------------------------------------------------
+# PAGE CONFIGURATION
+# ---------------------------------------------------------
 
-    def _configure_style(self) -> None:
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"), foreground="#12304a")
-        style.configure("Subtitle.TLabel", font=("Segoe UI", 10), foreground="#5a6872")
-        style.configure("Accent.TButton", background="#087f5b", foreground="white", padding=9)
-        style.configure("Treeview", rowheight=30)
-        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
+st.set_page_config(
+    page_title="Face Recognition Attendance",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-    def _build_ui(self) -> None:
-        header = ttk.Frame(self, padding=(28, 22, 28, 12))
-        header.pack(fill="x")
-        ttk.Label(header, text="Attendance Desk", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="Register students, capture face data, and keep daily records in one place.", style="Subtitle.TLabel").pack(anchor="w", pady=(4, 0))
 
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill="both", expand=True, padx=24, pady=(0, 24))
-        self.registration_tab = ttk.Frame(self.notebook, padding=22)
-        self.attendance_tab = ttk.Frame(self.notebook, padding=22)
-        self.report_tab = ttk.Frame(self.notebook, padding=22)
-        self.notebook.add(self.registration_tab, text="Student registration")
-        self.notebook.add(self.attendance_tab, text="Mark attendance")
-        self.notebook.add(self.report_tab, text="Attendance report")
-        self._build_registration()
-        self._build_attendance()
-        self._build_report()
+# ---------------------------------------------------------
+# CUSTOM CSS
+# ---------------------------------------------------------
 
-    def _build_registration(self) -> None:
-        form = ttk.LabelFrame(self.registration_tab, text="New student", padding=18)
-        form.pack(fill="x")
-        self.student_fields: dict[str, ttk.Entry] = {}
-        labels = [("Student ID", "student_id"), ("Full name", "name"), ("Course / class", "course"), ("Email", "email")]
-        for row, (label, key) in enumerate(labels):
-            ttk.Label(form, text=label).grid(row=row, column=0, sticky="w", padx=(0, 14), pady=7)
-            entry = ttk.Entry(form, width=42)
-            entry.grid(row=row, column=1, sticky="ew", pady=7)
-            self.student_fields[key] = entry
-        form.columnconfigure(1, weight=1)
-        ttk.Button(form, text="Save student and capture face", style="Accent.TButton", command=self.register_student).grid(row=4, column=1, sticky="w", pady=(15, 2))
+st.markdown(
+    """
+    <style>
 
-        list_frame = ttk.LabelFrame(self.registration_tab, text="Registered students", padding=12)
-        list_frame.pack(fill="both", expand=True, pady=(20, 0))
-        columns = ("student_id", "name", "course", "email", "face")
-        self.students_tree = ttk.Treeview(list_frame, columns=columns, show="headings")
-        headings = {"student_id": "Student ID", "name": "Name", "course": "Course", "email": "Email", "face": "Face data"}
-        for column in columns:
-            self.students_tree.heading(column, text=headings[column])
-            self.students_tree.column(column, width=140)
-        self.students_tree.pack(side="left", fill="both", expand=True)
-        ttk.Scrollbar(list_frame, orient="vertical", command=self.students_tree.yview).pack(side="right", fill="y")
+    .main-title {
+        font-size: 38px;
+        font-weight: 700;
+        color: #12304a;
+        margin-bottom: 5px;
+    }
 
-    def _build_attendance(self) -> None:
-        ttk.Label(self.attendance_tab, text="Use the webcam to identify one registered student and mark today's attendance.", style="Subtitle.TLabel").pack(anchor="w", pady=(0, 18))
-        ttk.Button(self.attendance_tab, text="Start webcam recognition", style="Accent.TButton", command=self.mark_attendance).pack(anchor="w")
-        self.attendance_status = ttk.Label(self.attendance_tab, text="Ready", padding=(0, 22), font=("Segoe UI", 13))
-        self.attendance_status.pack(anchor="w")
-        ttk.Label(self.attendance_tab, text="Attendance is recorded once per student per day. Recognition requires a webcam and the packages in requirements.txt.", style="Subtitle.TLabel", wraplength=700).pack(anchor="w", pady=(10, 0))
+    .subtitle {
+        font-size: 16px;
+        color: #5a6872;
+        margin-bottom: 25px;
+    }
 
-    def _build_report(self) -> None:
-        controls = ttk.Frame(self.report_tab)
-        controls.pack(fill="x", pady=(0, 12))
-        ttk.Label(controls, text="Search").pack(side="left")
-        self.search_entry = ttk.Entry(controls, width=28)
-        self.search_entry.pack(side="left", padx=(8, 16))
-        ttk.Label(controls, text="Date (YYYY-MM-DD)").pack(side="left")
-        self.date_entry = ttk.Entry(controls, width=15)
-        self.date_entry.insert(0, date.today().isoformat())
-        self.date_entry.pack(side="left", padx=8)
-        ttk.Button(controls, text="Filter", command=self.refresh_attendance).pack(side="left", padx=4)
-        ttk.Button(controls, text="Clear", command=self.clear_filters).pack(side="left")
-        ttk.Button(controls, text="Export CSV", command=self.export_csv).pack(side="right")
-        frame = ttk.Frame(self.report_tab)
-        frame.pack(fill="both", expand=True)
-        columns = ("date", "time", "student_id", "name", "course")
-        self.attendance_tree = ttk.Treeview(frame, columns=columns, show="headings")
-        headings = {"date": "Date", "time": "Time", "student_id": "Student ID", "name": "Name", "course": "Course"}
-        for column in columns:
-            self.attendance_tree.heading(column, text=headings[column])
-            self.attendance_tree.column(column, width=150)
-        self.attendance_tree.pack(side="left", fill="both", expand=True)
-        ttk.Scrollbar(frame, orient="vertical", command=self.attendance_tree.yview).pack(side="right", fill="y")
+    .section-title {
+        font-size: 25px;
+        font-weight: 600;
+        color: #12304a;
+        margin-top: 10px;
+        margin-bottom: 15px;
+    }
 
-    def register_student(self) -> None:
-        values = {key: entry.get().strip() for key, entry in self.student_fields.items()}
-        if not values["student_id"] or not values["name"] or not values["course"]:
-            messagebox.showwarning("Incomplete form", "Student ID, name, and course are required.")
-            return
+    .status-card {
+        padding: 20px;
+        border-radius: 12px;
+        background-color: #f5f7f9;
+        border: 1px solid #e1e5e8;
+        margin-bottom: 15px;
+    }
+
+    .success-card {
+        padding: 20px;
+        border-radius: 12px;
+        background-color: #eaf8f2;
+        border: 1px solid #b7e4d1;
+        color: #146c43;
+    }
+
+    .warning-card {
+        padding: 20px;
+        border-radius: 12px;
+        background-color: #fff8e1;
+        border: 1px solid #ffe082;
+        color: #7a5b00;
+    }
+
+    .danger-card {
+        padding: 20px;
+        border-radius: 12px;
+        background-color: #fff0f0;
+        border: 1px solid #f2b8b8;
+        color: #a33a3a;
+    }
+
+    div[data-testid="stMetric"] {
+        background-color: #f7f9fb;
+        padding: 15px;
+        border-radius: 10px;
+        border: 1px solid #e5e8eb;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ---------------------------------------------------------
+# DATABASE
+# ---------------------------------------------------------
+
+@st.cache_resource
+def get_database() -> Database:
+    return Database()
+
+
+db = get_database()
+
+
+# ---------------------------------------------------------
+# HEADER
+# ---------------------------------------------------------
+
+st.markdown(
+    '<div class="main-title">🎓 Face Recognition Attendance System</div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    '<div class="subtitle">'
+    "Register students, capture face data, mark attendance, and generate attendance reports."
+    "</div>",
+    unsafe_allow_html=True,
+)
+
+
+# ---------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------
+
+st.sidebar.title("📌 Navigation")
+
+page = st.sidebar.radio(
+    "Select Page",
+    [
+        "🏠 Dashboard",
+        "👨‍🎓 Student Registration",
+        "📷 Mark Attendance",
+        "📊 Attendance Report",
+    ],
+)
+
+st.sidebar.markdown("---")
+
+students = db.students()
+attendance_records = db.attendance()
+
+st.sidebar.metric(
+    "Registered Students",
+    len(students),
+)
+
+st.sidebar.metric(
+    "Attendance Records",
+    len(attendance_records),
+)
+
+
+# =========================================================
+# DASHBOARD
+# =========================================================
+
+if page == "🏠 Dashboard":
+
+    st.markdown(
+        '<div class="section-title">Dashboard</div>',
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "👨‍🎓 Students",
+            len(students),
+        )
+
+    with col2:
+        st.metric(
+            "📝 Attendance Records",
+            len(attendance_records),
+        )
+
+    students_with_face = sum(
+        1
+        for student in students
+        if student["face_encoding"]
+    )
+
+    with col3:
+        st.metric(
+            "🙂 Face Data",
+            students_with_face,
+        )
+
+    st.markdown("---")
+
+    st.subheader("System Features")
+
+    feature_col1, feature_col2 = st.columns(2)
+
+    with feature_col1:
+
+        st.markdown(
+            """
+            ### 👨‍🎓 Student Registration
+
+            - Add student ID
+            - Add student name
+            - Add course/class
+            - Add email
+            - Capture face using browser camera
+            - Store face encoding securely in SQLite
+            """
+        )
+
+    with feature_col2:
+
+        st.markdown(
+            """
+            ### 📷 Attendance
+
+            - Open browser camera
+            - Capture student's face
+            - Compare with registered students
+            - Automatically identify student
+            - Mark attendance once per day
+            """
+        )
+
+    st.markdown("---")
+
+    st.subheader("📋 Recent Attendance")
+
+    recent = db.attendance(limit=10)
+
+    if recent:
+
+        data = []
+
+        for row in recent:
+
+            data.append(
+                {
+                    "Date": row["attended_on"],
+                    "Time": row["attended_at"].split("T")[-1],
+                    "Student ID": row["student_id"],
+                    "Name": row["name"],
+                    "Course": row["course"],
+                }
+            )
+
+        st.dataframe(
+            pd.DataFrame(data),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+
+        st.info("No attendance records available yet.")
+
+
+# =========================================================
+# STUDENT REGISTRATION
+# =========================================================
+
+elif page == "👨‍🎓 Student Registration":
+
+    st.markdown(
+        '<div class="section-title">👨‍🎓 Student Registration</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.info(
+        "Enter the student information and then capture one clear face image."
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        student_id = st.text_input(
+            "Student ID *",
+            placeholder="Example: STU001",
+        )
+
+        student_name = st.text_input(
+            "Full Name *",
+            placeholder="Example: Ritesh Patwa",
+        )
+
+        course = st.text_input(
+            "Course / Class *",
+            placeholder="Example: B.Sc IT",
+        )
+
+    with col2:
+
+        email = st.text_input(
+            "Email",
+            placeholder="student@example.com",
+        )
+
+        st.markdown("### 📷 Capture Face")
+
+        face_image = st.camera_input(
+            "Take a clear photo of the student's face"
+        )
+
+    st.markdown("---")
+
+    if st.button(
+        "💾 Register Student",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        # ---------------------------------------------
+        # VALIDATION
+        # ---------------------------------------------
+
+        if not student_id.strip():
+            st.warning("Student ID is required.")
+            st.stop()
+
+        if not student_name.strip():
+            st.warning("Student name is required.")
+            st.stop()
+
+        if not course.strip():
+            st.warning("Course / class is required.")
+            st.stop()
+
+        if face_image is None:
+            st.warning(
+                "Please capture the student's face before registering."
+            )
+            st.stop()
+
+        # ---------------------------------------------
+        # CHECK DUPLICATE
+        # ---------------------------------------------
+
+        existing = db.student_by_student_id(
+            student_id.strip()
+        )
+
+        if existing:
+            st.error(
+                f"Student ID '{student_id}' is already registered."
+            )
+            st.stop()
+
+        # ---------------------------------------------
+        # FACE ENCODING
+        # ---------------------------------------------
+
         try:
-            student_id = self.db.add_student(**values)
-            if messagebox.askyesno("Capture face", "Student saved. Capture face data now?"):
-                encoding = capture_encoding()
-                self.db.update_face_encoding(student_id, encoding)
-            for entry in self.student_fields.values():
-                entry.delete(0, tk.END)
-            self.refresh_students()
-            messagebox.showinfo("Saved", "Student registration completed.")
-        except (ValueError, RecognitionError) as error:
-            messagebox.showerror("Could not complete registration", str(error))
-        except Exception as error:
-            if "UNIQUE constraint failed" in str(error):
-                messagebox.showerror("Duplicate student", "That student ID is already registered.")
-            else:
-                messagebox.showerror("Could not save student", str(error))
 
-    def mark_attendance(self) -> None:
-        students = [dict(row) for row in self.db.students()]
-        try:
-            matched_id = recognize_from_webcam(students)
-            if matched_id is None:
-                self.attendance_status.configure(text="Recognition cancelled.")
-                return
-            marked = self.db.mark_attendance(matched_id)
-            student = self.db.student(matched_id)
-            name = student["name"] if student else "Student"
-            self.attendance_status.configure(text=f"{name}: " + ("attendance marked." if marked else "already marked today."))
-            self.refresh_attendance()
+            with st.spinner("Processing face..."):
+
+                encoding = capture_encoding_from_image(
+                    face_image.getvalue()
+                )
+
         except RecognitionError as error:
-            messagebox.showerror("Recognition unavailable", str(error))
 
-    def refresh_students(self) -> None:
-        if not hasattr(self, "students_tree"):
-            return
-        for item in self.students_tree.get_children():
-            self.students_tree.delete(item)
-        for student in self.db.students():
-            self.students_tree.insert("", "end", values=(student["student_id"], student["name"], student["course"], student["email"], "Ready" if student["face_encoding"] else "Not captured"))
+            st.error(
+                f"Face capture failed: {error}"
+            )
 
-    def refresh_attendance(self) -> None:
-        if not hasattr(self, "attendance_tree"):
-            return
-        for item in self.attendance_tree.get_children():
-            self.attendance_tree.delete(item)
-        search = self.search_entry.get().strip() if hasattr(self, "search_entry") else ""
-        selected_date = self.date_entry.get().strip() if hasattr(self, "date_entry") else ""
-        for record in self.db.attendance(search, selected_date):
-            self.attendance_tree.insert("", "end", values=(record["attended_on"], record["attended_at"].split("T")[-1], record["student_id"], record["name"], record["course"]))
+            st.stop()
 
-    def clear_filters(self) -> None:
-        self.search_entry.delete(0, tk.END)
-        self.date_entry.delete(0, tk.END)
-        self.refresh_attendance()
+        # ---------------------------------------------
+        # SAVE STUDENT
+        # ---------------------------------------------
 
-    def export_csv(self) -> None:
-        records = self.db.attendance(self.search_entry.get().strip(), self.date_entry.get().strip())
-        if not records:
-            messagebox.showinfo("Nothing to export", "No attendance records match the current filters.")
-            return
-        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")], initialfile="attendance_report.csv")
-        if not path:
-            return
-        with open(path, "w", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow(["Date", "Time", "Student ID", "Name", "Course"])
-            writer.writerows((row["attended_on"], row["attended_at"].split("T")[-1], row["student_id"], row["name"], row["course"]) for row in records)
-        messagebox.showinfo("Export complete", f"Report exported to {path}")
+        try:
 
-    def close(self) -> None:
-        self.db.close()
-        self.destroy()
+            db.add_student(
+                student_id=student_id.strip(),
+                name=student_name.strip(),
+                course=course.strip(),
+                email=email.strip(),
+                face_encoding=encoding,
+            )
+
+            st.success(
+                f"✅ {student_name} registered successfully!"
+            )
+
+            st.balloons()
+
+            st.info(
+                "The student's face data has been saved."
+            )
+
+        except Exception as error:
+
+            st.error(
+                f"Could not save student: {error}"
+            )
 
 
-if __name__ == "__main__":
-    AttendanceApp().mainloop()
+# =========================================================
+# MARK ATTENDANCE
+# =========================================================
+
+elif page == "📷 Mark Attendance":
+
+    st.markdown(
+        '<div class="section-title">📷 Mark Attendance</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.info(
+        "Allow camera access and capture the face of a registered student."
+    )
+
+    students = db.students()
+
+    students_with_faces = [
+        student
+        for student in students
+        if student["face_encoding"]
+    ]
+
+    if not students_with_faces:
+
+        st.warning(
+            "No students with face data are registered yet."
+        )
+
+        st.info(
+            "Go to 'Student Registration' and register a student first."
+        )
+
+    else:
+
+        st.write(
+            f"Registered face profiles available: "
+            f"**{len(students_with_faces)}**"
+        )
+
+        attendance_image = st.camera_input(
+            "Capture face for attendance"
+        )
+
+        if attendance_image is not None:
+
+            try:
+
+                with st.spinner(
+                    "Recognizing face..."
+                ):
+
+                    matched_id = recognize_from_image(
+                        attendance_image.getvalue(),
+                        students_with_faces,
+                    )
+
+                if matched_id is None:
+
+                    st.error(
+                        "❌ Face not recognized."
+                    )
+
+                    st.info(
+                        "Make sure the student is registered and "
+                        "the face is clearly visible."
+                    )
+
+                else:
+
+                    student = db.student(
+                        matched_id
+                    )
+
+                    if student is None:
+
+                        st.error(
+                            "Recognized student could not be found."
+                        )
+
+                    else:
+
+                        marked = db.mark_attendance(
+                            matched_id
+                        )
+
+                        if marked:
+
+                            st.success(
+                                f"✅ Attendance marked for "
+                                f"**{student['name']}**"
+                            )
+
+                            st.write(
+                                f"Student ID: **{student['student_id']}**"
+                            )
+
+                            st.write(
+                                f"Course: **{student['course']}**"
+                            )
+
+                        else:
+
+                            st.warning(
+                                f"⚠️ {student['name']} "
+                                "has already been marked present today."
+                            )
+
+            except RecognitionError as error:
+
+                st.error(
+                    f"Recognition error: {error}"
+                )
+
+            except Exception as error:
+
+                st.error(
+                    f"Unexpected error: {error}"
+                )
+
+
+# =========================================================
+# ATTENDANCE REPORT
+# =========================================================
+
+elif page == "📊 Attendance Report":
+
+    st.markdown(
+        '<div class="section-title">📊 Attendance Report</div>',
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        search = st.text_input(
+            "🔍 Search",
+            placeholder="Name, Student ID or Course",
+        )
+
+    with col2:
+
+        selected_date = st.date_input(
+            "📅 Attendance Date",
+            value=None,
+        )
+
+    date_filter = ""
+
+    if selected_date:
+
+        date_filter = selected_date.isoformat()
+
+    records = db.attendance(
+        search=search.strip(),
+        date=date_filter,
+    )
+
+    if records:
+
+        report_data = []
+
+        for record in records:
+
+            report_data.append(
+                {
+                    "Date": record["attended_on"],
+                    "Time": record["attended_at"].split("T")[-1],
+                    "Student ID": record["student_id"],
+                    "Name": record["name"],
+                    "Course": record["course"],
+                }
+            )
+
+        dataframe = pd.DataFrame(
+            report_data
+        )
+
+        st.dataframe(
+            dataframe,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # ---------------------------------------------
+        # CSV EXPORT
+        # ---------------------------------------------
+
+        csv_data = dataframe.to_csv(
+            index=False
+        ).encode("utf-8")
+
+        st.download_button(
+            label="⬇️ Download CSV Report",
+            data=csv_data,
+            file_name="attendance_report.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    else:
+
+        st.info(
+            "No attendance records found."
+        )
+
+
+# =========================================================
+# FOOTER
+# =========================================================
+
+st.markdown("---")
+
+st.caption(
+    "Face Recognition Attendance System | "
+    "Streamlit + Python + SQLite"
+)
